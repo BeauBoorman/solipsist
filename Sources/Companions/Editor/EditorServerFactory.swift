@@ -25,6 +25,7 @@ enum EditorServerFactory {
         return try engine.editorStart(
             editorBinary: editorBinary,
             workingDirectory: workingDirectory,
+            uiDir: findEditorUiDir(relativeTo: engine.binaryURL),
             port: 0
         )
     }
@@ -56,6 +57,38 @@ enum EditorServerFactory {
         for relative in devCandidates {
             let url = cwd.appendingPathComponent(relative).standardizedFileURL
             if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        }
+
+        return nil
+    }
+
+    /// Locates the compiled editor UI dir (`index.html` + `assets/`) backing
+    /// `--ui-dir`. Without it the host starts but serves 404s: its default
+    /// (`editor/ui/dist`, CWD-relative) never exists under a project root.
+    static func findEditorUiDir(
+        relativeTo engineBinary: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        let fileManager = FileManager.default
+
+        func isUiDir(_ url: URL) -> Bool {
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+                return false
+            }
+            return fileManager.fileExists(atPath: url.appendingPathComponent("index.html").path)
+        }
+
+        if let env = environment["SOLIPSIST_EDITOR_UI_DIR"], !env.isEmpty {
+            let url = URL(fileURLWithPath: env)
+            if isUiDir(url) { return url }
+        }
+
+        let sibling = engineBinary.deletingLastPathComponent().appendingPathComponent("editor-ui")
+        if isUiDir(sibling) { return sibling }
+
+        if let bundled = Bundle.main.url(forResource: "editor-ui", withExtension: nil) {
+            if isUiDir(bundled) { return bundled }
         }
 
         return nil

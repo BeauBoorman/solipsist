@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 final class EngineBinaryLocatorTests: XCTestCase {
@@ -68,5 +69,84 @@ final class EngineBinaryLocatorTests: XCTestCase {
         EngineBinaryDefaults.removeLegacyCustomPaths(defaults: defaults)
 
         XCTAssertEqual(defaults.string(forKey: "someUnrelatedKey"), "keep me")
+    }
+
+    // MARK: - Bundled editor UI + oliver sibling resolution
+
+    private func makeExecutable(at url: URL) -> Bool {
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+        do {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: url.path
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func testEditorUiDirSiblingOfEngineWinsWithoutEnv() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let uiDir = root.appendingPathComponent("editor-ui")
+        try FileManager.default.createDirectory(at: uiDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+        FileManager.default.createFile(
+            atPath: uiDir.appendingPathComponent("index.html").path,
+            contents: Data()
+        )
+
+        let url = EditorServerFactory.findEditorUiDir(
+            relativeTo: root.appendingPathComponent("boris"),
+            environment: [:]
+        )
+        XCTAssertEqual(url?.path, uiDir.path)
+    }
+
+    func testEditorUiDirEnvironmentOverrideWins() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+        FileManager.default.createFile(
+            atPath: root.appendingPathComponent("index.html").path,
+            contents: Data()
+        )
+
+        let url = EditorServerFactory.findEditorUiDir(
+            relativeTo: URL(fileURLWithPath: "/usr/bin/boris"),
+            environment: ["SOLIPSIST_EDITOR_UI_DIR": root.path]
+        )
+        XCTAssertEqual(url?.path, root.path)
+    }
+
+    func testEditorUiDirNilWhenAbsent() {
+        let url = EditorServerFactory.findEditorUiDir(
+            relativeTo: URL(fileURLWithPath: "/nonexistent-dir-xyz/boris"),
+            environment: [:]
+        )
+        XCTAssertNil(url)
+    }
+
+    func testOliverSiblingOfEngineBinaryResolves() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let oliver = root.appendingPathComponent("oliver")
+        XCTAssertTrue(makeExecutable(at: oliver))
+
+        let url = OliverBinary.locate(
+            environment: [:],
+            borisBinary: root.appendingPathComponent("boris")
+        )
+        XCTAssertEqual(url?.path, oliver.path)
     }
 }
