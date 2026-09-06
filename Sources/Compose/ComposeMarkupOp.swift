@@ -46,34 +46,54 @@ enum ComposeMarkupOp: Equatable, Sendable {
         let end = min(max(event.end, start), lineLength)
 
         switch event.inputType {
-        case "insertText", "insertCompositionText":
-            let text = event.data ?? ""
+        case "insertText":
+            // WebKit only guarantees `data` for plain insertText; a nil here
+            // means the event carries its payload elsewhere (or none) —
+            // unmappable, never guess. The next reconcile restores the DOM.
+            guard let text = event.data else { return nil }
             guard let bufferAt = blockMap.bufferOffset(renderedOffset: start, in: block) else { return nil }
             if start == end {
                 return .insertText(text, offset: bufferAt)
             }
-            return replace(range: (bufferAt, end - start), with: text, in: blockMap, block: block)
-        case "insertReplacementText", "insertFromPaste", "insertTranspose":
-            let text = event.data ?? ""
-            return replace(range: resolved(start, end, block: block), with: text, in: blockMap, block: block)
+            // bufferAt is already absolute; splice end-relative to it.
+            return .replaceText(range: NSRange(location: bufferAt, length: end - start), text: text)
+        case "insertCompositionText", "insertReplacementText", "insertFromPaste", "insertTranspose":
+            // Out of scope for the spike (WYSIWYG-DESIGN.md "Deliberately
+            // unmapped"): IME composition commits arrive as a run of these
+            // mid-composition (splicing half-composed CJK), and WebKit sends
+            // paste payload on dataTransfer, never `data` (reading the
+            // clipboard needs an async hop). Nil keeps the buffer untouched;
+            // the reconcile snaps the DOM back to truth.
+            return nil
         case "deleteContentBackward", "deleteContentForward", "deleteByCut", "deleteByDrag":
-            let (bufferStart, length) = resolved(start, end, block: block)
-            if length > 0 {
-                return .deleteText(NSRange(location: bufferStart, length: length))
-            }
-            // Collapsed caret: delete one grapheme cluster on the deletion
-            // side. Surrogate-pair and ZWJ aware — never split one.
-            let line = (block.text as NSString)
-            let direction = event.inputType == "deleteContentForward" ? +1 : -1
-            let range = Self.graphemeExtent(atUTF16: bufferStart - block.firstLineUTF16, direction: direction, in: line)
-                ?? NSRange(location: 0, length: 0)
-            guard range.length > 0 else { return nil }
-            return .deleteText(NSRange(location: block.firstLineUTF16 + range.location, length: range.length))
+            return Self.deleteOp(start: start, end: end, block: block, inputType: event.inputType, blockMap: blockMap)
         default:
             // insertParagraphBreak and everything unrecognized: unmappable
             // in the spike (block-level restructure is a follow-up card).
             return nil
         }
+    }
+
+    /// Range deletes are direction-agnostic; a collapsed caret deletes one
+    /// grapheme cluster on the deletion side (surrogate-pair and ZWJ aware).
+    private static func deleteOp(
+        start: Int,
+        end: Int,
+        block: ComposeBlockMap.Block,
+        inputType: String,
+        blockMap: ComposeBlockMap
+    ) -> ComposeMarkupOp? {
+        guard let bufferStart = blockMap.bufferOffset(renderedOffset: start, in: block) else { return nil }
+        let length = end - start
+        if length > 0 {
+            return .deleteText(NSRange(location: bufferStart, length: length))
+        }
+        let line = (block.text as NSString)
+        let direction = inputType == "deleteContentForward" ? +1 : -1
+        let range = Self.graphemeExtent(atUTF16: bufferStart - block.firstLineUTF16, direction: direction, in: line)
+            ?? NSRange(location: 0, length: 0)
+        guard range.length > 0 else { return nil }
+        return .deleteText(NSRange(location: block.firstLineUTF16 + range.location, length: range.length))
     }
 
     /// Applies an operation to a buffer. Pure: returns the new text and caret.
@@ -106,26 +126,6 @@ enum ComposeMarkupOp: Equatable, Sendable {
 
     // MARK: - Internals
 
-    private static func replace(
-        range: (offset: Int, length: Int),
-        with text: String,
-        in blockMap: ComposeBlockMap,
-        block: ComposeBlockMap.Block
-    ) -> ComposeMarkupOp? {
-        guard let bufferStart = blockMap.bufferOffset(renderedOffset: range.offset, in: block) else { return nil }
-        return .replaceText(range: NSRange(location: bufferStart, length: range.length), text: text)
-    }
-
-    /// Resolves a (start, end) rendered pair against the block into a
-    /// (buffer-relative UTF-16 start, length) pair.
-    private static func resolved(
-        _ start: Int,
-        _ end: Int,
-        block: ComposeBlockMap.Block
-    ) -> (offset: Int, length: Int) {
-        (offset: start, length: end - start)
-    }
-
     /// The UTF-16 extent of one grapheme cluster at a caret position,
     /// deleted toward `direction`. `atUTF16` is relative to the line.
     private static func graphemeExtent(atUTF16 position: Int, direction: Int, in line: NSString) -> NSRange? {
@@ -134,20 +134,7 @@ enum ComposeMarkupOp: Equatable, Sendable {
         // Caret must sit inside (or at the edge of) the line.
         guard position >= 0, position <= length else { return nil }
         if direction < 0 {
-            guard position > 0 else { return nil }
-            var start = position - 1
-            // Step back over the low surrogate of any pair — a cluster
-            // that ends in a low surrogate starts at its high partner.
-            // Editable text is marker-free plain text (no combining
-            // sequences by the editable predicate), so a surrogate pair is
-            // the only multi-unit cluster shape we must honor.
-            let joinsPair = start > 0
-                && isLowSurrogate(line.character(at: start))
-                && isHighSurrogate(line.character(at: start - 1))
-            if joinsPair {
-                start -= 1
-            }
-            return NSRange(location: start, length: position - start)
+            return backwardClusterExtent(endingAt: position, in: line)
         }
         guard position < length else { return nil }
         var end = position + 1
@@ -158,6 +145,33 @@ enum ComposeMarkupOp: Equatable, Sendable {
             end += 1
         }
         return NSRange(location: position, length: end - position)
+    }
+
+    /// Step back one cluster from a caret: continuation units (ZWJ, bidi
+    /// marks, combining marks, low surrogates) join leftward, and each low
+    /// surrogate carries its high partner. A high surrogate joins only
+    /// when what precedes it continues the cluster (e.g. a ZWJ family:
+    /// 👨 ZWJ 👩 ZWJ 👧 deletes as one unit). Mirrors the forward path's
+    /// isContinuationScalar walk.
+    private static func backwardClusterExtent(endingAt position: Int, in line: NSString) -> NSRange? {
+        guard position > 0 else { return nil }
+        var start = position - 1
+        while start > 0 {
+            let unit = line.character(at: start)
+            if isContinuationScalar(unit) {
+                start -= 1
+                continue
+            }
+            if isHighSurrogate(unit), isLowSurrogate(line.character(at: start + 1)), isContinuationScalar(line.character(at: start - 1)) {
+                start -= 1
+                continue
+            }
+            break
+        }
+        if start > 0, isLowSurrogate(line.character(at: start)), isHighSurrogate(line.character(at: start - 1)) {
+            start -= 1
+        }
+        return NSRange(location: start, length: position - start)
     }
 
     private static func isHighSurrogate(_ scalar: unichar) -> Bool {

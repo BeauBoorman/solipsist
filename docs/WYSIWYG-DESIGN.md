@@ -79,11 +79,23 @@ enum ComposeMarkupOp: Equatable {
 
 - **Derivation** — `ComposeMarkupOp.derive(from:in:blockMap:)` maps a
   visual event onto an op or returns `nil` (unmappable):
-  - `insertText` / `insertReplacementText` / `insertFromPaste` /
-    `insertCompositionText` → insert at caret or replace the extent.
-  - `deleteContentBackward` / `deleteContentForward` with an extent →
-    delete the extent; collapsed → delete one grapheme before/after the
-    caret (surrogate-pair aware — never split one).
+  - `insertText` (with `data`) → insert at caret or replace the extent.
+    A nil `data` is unmappable — never guess an empty splice.
+  - **Deliberately unmapped in the spike:** `insertFromPaste` (WebKit
+    carries the payload on `dataTransfer`, never `data`; reading the
+    clipboard needs an async hop the op contract does not have),
+    `insertCompositionText` (mid-IME half-composed text must never
+    splice), `insertReplacementText`, and `insertTranspose` (spelling-
+    autoswap semantics we do not model). Each returns `nil` host-side,
+    and the bridge `preventDefault()`s the DOM side of the same set so
+    paint never desyncs from the buffer. The buffer stays untouched and
+    the next reconcile snaps the DOM back to truth. Paste support is a
+    follow-up card (bridge reads `dataTransfer`, forwards the string as
+    `data`).
+  - `deleteContentBackward` / `deleteContentForward` / `deleteByCut` /
+    `deleteByDrag` with an extent → delete the extent; collapsed → delete
+    one grapheme before/after the caret (surrogate-pair and ZWJ aware —
+    never split one).
   - Paragraph breaks (`insertParagraphBreak`, `insertLineBreak`) are
     **unmappable in the spike** (a visual paragraph split is a block-level
     restructure, follow-up card); Enter is also intercepted in JS so the

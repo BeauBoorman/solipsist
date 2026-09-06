@@ -46,6 +46,16 @@ enum ComposeVisualDocument {
                   event.preventDefault();
                   return;
                 }
+                // The spike's op set is insertText / deletes only. Every
+                // other input type is unmapped host-side; letting WebKit
+                // mutate the DOM for it would desync paint from buffer
+                // until the reconcile — cancel it so the DOM also holds.
+                if (event.inputType !== 'insertText'
+                    && event.inputType.indexOf('deleteContent') !== 0
+                    && event.inputType !== 'deleteByCut'
+                    && event.inputType !== 'deleteByDrag') {
+                  event.preventDefault();
+                }
                 var sel = window.getSelection();
                 var start = 0, end = 0;
                 if (sel && sel.rangeCount > 0 && blockEl.contains(sel.anchorNode)) {

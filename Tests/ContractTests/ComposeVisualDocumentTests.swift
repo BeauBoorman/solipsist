@@ -32,6 +32,15 @@ final class ComposeVisualDocumentTests: XCTestCase {
         XCTAssertTrue(html.contains("preventDefault"))
     }
 
+    func testUnmappedInputTypesPreventDefaulted() {
+        // The DOM side must hold for the op-set gap (paste/composition/etc.):
+        // paint never desyncs from the buffer awaiting the reconcile.
+        let html = ComposeVisualDocument.html(fragment: "<p>x</p>", themeCSS: nil, editableBlocks: [0])
+        XCTAssertTrue(html.contains("insertFromPaste") == false) // not special-cased by name…
+        XCTAssertTrue(html.contains("event.inputType !== 'insertText'")) // …but excluded by the op set
+        XCTAssertTrue(html.contains("indexOf('deleteContent')"))
+    }
+
     func testStyleCloseGuardInherited() {
         let hostile = "a::after { content: \"</style><script>alert(1)</script>\"; }"
         let html = ComposeVisualDocument.html(fragment: "<p>x</p>", themeCSS: hostile, editableBlocks: [])
