@@ -46,6 +46,14 @@ SOLIPSIST_BORIS_BIN=SUPPORT-NOT-FOR-GITHUB/boris-agent-kit/boris-agent-kit/bin/b
   make run-spike
 ```
 
+Engine checkouts (boris + oliver) resolve via `BORIS_REPO_DIR` /
+`OLIVER_REPO_DIR` — required from worktrees — else derived from
+`SOLIPSIST_BORIS_BIN` inside a checkout, else `../boris` / `../oliver`
+siblings. `make build` bundles boris, boris-editor + editor-ui, and oliver
+into `Resources/`; a missing piece fails the build (`SKIP_EMBED_BORIS=1`
+opts out). Overrides: `SOLIPSIST_BORIS_EDITOR_BIN`,
+`SOLIPSIST_EDITOR_UI_DIR`, `SOLIPSIST_OLIVER_BIN`.
+
 Never hand-edit `Solipsist.xcodeproj` — edit `Project.yml`.
 
 ## Git

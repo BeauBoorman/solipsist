@@ -1,7 +1,11 @@
 # Solipsist — convenience targets.
 #
 # XcodeGen is vendored into .tools/ (project-local, no system install).
-# The Boris engine checkout must exist at ../boris (see scripts/embed-boris.sh).
+# Engine sources: boris + oliver checkouts. The embed script resolves them via
+# BORIS_REPO_DIR / OLIVER_REPO_DIR (required from worktrees), derives the boris
+# repo from SOLIPSIST_BORIS_BIN inside a checkout, then sibling fallbacks
+# (see scripts/embed-boris.sh). It bundles boris, boris-editor + editor-ui,
+# and oliver into Resources/ — a missing piece fails the build.
 
 XCODEGEN := .tools/xcodegen/xcodegen/bin/xcodegen
 PROJECT  := Solipsist.xcodeproj
