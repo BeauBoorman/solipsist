@@ -47,6 +47,9 @@ struct ComposeEditorView: View {
     /// #263: toolbar-to-text-view seam for formatting verbs.
     @State private var formatApplier = ComposeFormatApplier()
     @State private var showPreviewOptions = false
+    /// WYSIWYG spike: when on and the language is Markdown, the preview
+    /// pane becomes the visual editing surface (WYSIWYG-DESIGN.md).
+    @State private var visualMode = false
 
     private var autosaveName: String {
         "ComposeSplit-\(document.language.rawValue)"
@@ -103,15 +106,25 @@ struct ComposeEditorView: View {
                     )
                 )
                 if showPreview {
-                    ComposePreviewView(
-                        source: document.text,
-                        language: document.language,
-                        options: previewOptions,
-                        renderService: renderService,
-                        themeCSS: themeCSS,
-                        onDiagnostics: { diagnostics = $0 }
-                    )
-                    .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity)
+                    if visualMode, document.language == .markdown {
+                        ComposeVisualEditorView(
+                            document: document,
+                            options: previewOptions,
+                            renderService: renderService,
+                            themeCSS: themeCSS
+                        )
+                        .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ComposePreviewView(
+                            source: document.text,
+                            language: document.language,
+                            options: previewOptions,
+                            renderService: renderService,
+                            themeCSS: themeCSS,
+                            onDiagnostics: { diagnostics = $0 }
+                        )
+                        .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             if !diagnostics.isEmpty {
@@ -213,6 +226,19 @@ struct ComposeEditorView: View {
             .accessibilityLabel("Preview")
             .accessibilityHint("Toggle the Oliver preview pane")
             .accessibilityAddTraits(showPreview ? .isSelected : [])
+
+            // WYSIWYG spike: Markdown buffers only; the visual surface is
+            // Oliver's own render with editable paragraph blocks.
+            if document.language == .markdown {
+                Toggle(isOn: $visualMode) {
+                    Label("Visual", systemImage: "character.cursor.ibeam")
+                }
+                .toggleStyle(.button)
+                .help("Edit the rendered paragraph text in place (spike)")
+                .accessibilityLabel("Visual")
+                .accessibilityHint("Toggle visual editing on the preview surface.")
+                .accessibilityAddTraits(visualMode ? .isSelected : [])
+            }
 
             Toggle(isOn: frontmatterBinding) {
                 Label("Front Matter", systemImage: "doc.text.magnifyingglass")
@@ -330,54 +356,5 @@ private struct ComposeDiagnosticsPane: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(diagnostic.accessibilityLabel)
         }
-    }
-}
-
-/// #238: "Go to Line" sheet — a compact dialog with a single text field
-/// for a 1-based line number. Pre-filled with the cursor's current line;
-/// validated and clamped before the jump.
-private struct GoToLineSheet: View {
-    @Binding var isPresented: Bool
-    let currentLine: Int
-    let totalLines: Int
-    var onJump: (Int) -> Void
-
-    @State private var lineNumber = ""
-    @FocusState private var isFieldFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Go to line (of \(totalLines)):")
-                .font(.headline)
-            TextField("Line", text: $lineNumber)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .onSubmit(go)
-                .focused($isFieldFocused)
-                .onAppear {
-                    lineNumber = String(currentLine)
-                    isFieldFocused = true
-                }
-            HStack {
-                Button("Cancel") { isPresented = false }
-                    .keyboardShortcut(.cancelAction)
-                Button("Go") { go() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(Int(lineNumber) == nil)
-            }
-        }
-        .padding()
-        .frame(width: 280)
-        .onKeyPress(.escape) {
-            isPresented = false
-            return .handled
-        }
-    }
-
-    private func go() {
-        guard let line = Int(lineNumber), line >= 1 else { return }
-        let clamped = min(line, totalLines)
-        onJump(clamped)
-        isPresented = false
     }
 }

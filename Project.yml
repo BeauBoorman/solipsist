@@ -161,6 +161,9 @@ targets:
       - path: Sources/Intents/PostDraftEngine.swift
       - path: Sources/Compose/ComposeFormatToolbar.swift
       - path: Sources/Compose/ComposeTypography.swift
+      - path: Sources/Compose/ComposeBlockMap.swift
+      - path: Sources/Compose/ComposeMarkupOp.swift
+      - path: Sources/Compose/ComposeVisualDocument.swift
     settings:
       base:
         MACOSX_DEPLOYMENT_TARGET: "26.0"
